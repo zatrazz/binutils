@@ -3085,6 +3085,8 @@ struct elf_dyn_relocs
 
   /* Number of pc-relative relocs copied for the input section.  */
   bfd_size_type pc_count;
+
+  bfd_size_type rel_count;
 };
 
 extern bool _bfd_elf_create_ifunc_sections

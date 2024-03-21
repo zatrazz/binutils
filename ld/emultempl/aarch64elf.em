@@ -300,6 +300,10 @@ gld${EMULATION_NAME}_finish (void)
 	  if (! elf${ELFSIZE}_aarch64_build_stubs (& link_info))
 	    einfo (_("%X%P: can not build stubs: %E\n"));
 	}
+
+      /* And the DT_RELR contents.  */
+      if (! elf${ELFSIZE}_aarch64_build_relr (& link_info))
+	einfo (_("%X%P: can not build DT_RELR: %E\n"));
     }
 
   finish_default ();

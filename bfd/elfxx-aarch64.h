@@ -96,6 +96,11 @@ extern bool elf32_aarch64_size_stubs
 extern bool elf32_aarch64_build_stubs
   (struct bfd_link_info *);
 
+extern bool elf32_aarch64_build_relr
+  (struct bfd_link_info *);
+extern bool elf64_aarch64_build_relr
+  (struct bfd_link_info *);
+
 /* Take the PAGE component of an address or offset.  */
 #define PG(x)	     ((x) & ~ (bfd_vma) 0xfff)
 #define PG_OFFSET(x) ((x) &   (bfd_vma) 0xfff)

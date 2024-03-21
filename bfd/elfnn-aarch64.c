@@ -2706,6 +2706,18 @@ struct elf_aarch64_link_hash_table
   /* Used by local STT_GNU_IFUNC symbols.  */
   htab_t loc_hash_table;
   void * loc_hash_memory;
+
+  /* Number of relocs that might become R_AARCH64_RELATIVE.  */
+  unsigned int rel_count;
+
+  /* DT_RELR array of section/r_offset.  */
+  size_t relr_alloc;
+  size_t relr_count;
+  struct
+  {
+    asection *sec;
+    bfd_vma off;
+  } *relr;
 };
 
 /* Create an entry in an AArch64 ELF linker hash table.  */
@@ -4733,8 +4745,191 @@ skip_double_stub:
   return false;
 }
 
+/* The RELR encoding does not allow odd address.  */
+static bool
+elegible_relr (bfd_vma off, const asection *sec)
+{
+  return (off & 0x1) == 0 && sec->alignment_power >= 2;
+}
+
+static bool
+append_relr_off (struct elf_aarch64_link_hash_table *htab, asection *sec,
+		 bfd_vma off)
+{
+  if (htab->relr_count >= htab->relr_alloc)
+    {
+      if (htab->relr_alloc == 0)
+	htab->relr_alloc = 4096;
+      else
+	htab->relr_alloc *= 2;
+      htab->relr = bfd_realloc (htab->relr,
+				htab->relr_alloc * sizeof (*htab->relr));
+      if (htab->relr == NULL)
+	return false;
+    }
+  htab->relr[htab->relr_count].sec = sec;
+  htab->relr[htab->relr_count].off = off;
+  htab->relr_count++;
+  return true;
+}
+
+static int
+compare_relr_address (const void *arg1, const void *arg2)
+{
+  bfd_vma a = *(bfd_vma *) arg1;
+  bfd_vma b = *(bfd_vma *) arg2;
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+static bfd_vma *
+sort_relr (struct elf_aarch64_link_hash_table *htab)
+{
+  bfd_vma *addr = bfd_malloc (htab->relr_count * sizeof (*addr));
+  if (addr == NULL)
+    return NULL;
+
+  for (size_t i = 0; i < htab->relr_count; i++)
+    addr[i] = htab->relr[i].off;
+
+  if (htab->relr_count > 1)
+    qsort (addr, htab->relr_count, sizeof (*addr), compare_relr_address);
+
+  return addr;
+}
+
+static void
+maybe_strip_output (struct bfd_link_info *info, asection *isec)
+{
+  if (isec->size == 0
+      && isec->output_section->size == 0
+      && !(isec->output_section->flags & SEC_KEEP)
+      && !bfd_section_removed_from_list (info->output_bfd,
+					 isec->output_section)
+      && elf_section_data (isec->output_section)->dynindx == 0)
+    {
+      isec->output_section->flags |= SEC_EXCLUDE;
+      bfd_section_list_remove (info->output_bfd, isec->output_section);
+      info->output_bfd->section_count--;
+    }
+}
 
 /* Determine and set the size of the stub section for a final link.  */
+
+static bool
+got_and_plt_relr_for_local_syms (struct bfd_link_info *info)
+{
+  struct elf_aarch64_link_hash_table *htab;
+  bfd *ibfd;
+
+  htab = elf_aarch64_hash_table (info);
+
+  htab->relr_count = 0;
+  for (ibfd = info->input_bfds; ibfd != NULL; ibfd = ibfd->link.next)
+    {
+      Elf_Internal_Shdr *symtab_hdr;
+      Elf_Internal_Sym *local_syms;
+      bfd_size_type locsymcount;
+      struct elf_link_hash_entry **sym_hashes;
+
+      if (!is_aarch64_elf (ibfd))
+	continue;
+
+      symtab_hdr = &elf_symtab_hdr (ibfd);
+      sym_hashes = elf_sym_hashes (ibfd);
+      locsymcount = symtab_hdr->sh_info;
+      local_syms = (Elf_Internal_Sym *) symtab_hdr->contents;
+      if (local_syms == NULL && locsymcount != 0)
+	{
+	  local_syms = bfd_elf_get_elf_syms (ibfd, symtab_hdr, locsymcount,
+					     0, NULL, NULL, NULL);
+	  if (local_syms == NULL)
+	    return false;
+	}
+
+      for (asection *section = ibfd->sections;
+	   section != NULL;
+	   section = section->next)
+	{
+	  Elf_Internal_Rela *internal_relocs, *irelaend, *irela;
+
+	  /* If there aren't any relocs, then there's nothing more to
+	     do.  */
+	  if ((section->flags & SEC_RELOC) == 0
+	      || (section->flags & SEC_ALLOC) == 0
+	      || (section->flags & SEC_LOAD) == 0
+	      || section->reloc_count == 0)
+	    continue;
+
+	  if (!info->enable_dt_relr
+	      && (section->flags & SEC_CODE) == 0)
+	    continue;
+
+	  internal_relocs
+	    = _bfd_elf_link_read_relocs (ibfd, section, NULL, NULL,
+					 info->keep_memory);
+	  if (internal_relocs == NULL)
+	    return false;
+
+
+	  irela = internal_relocs;
+	  irelaend = irela + section->reloc_count;
+	  for (; irela < irelaend; irela++)
+	    {
+	      unsigned long r_symndx;
+	      unsigned int r_type;
+	      bfd_vma r_offset;
+	      struct elf_link_hash_entry *h;
+	      bool relative;
+
+	      r_symndx = ELFNN_R_SYM (irela->r_info);
+	      r_type = ELFNN_R_TYPE (irela->r_info);
+	      // TODO: handle alignment and ILP32
+	      if (r_type != R_AARCH64_ABS64)
+		continue;
+
+	      h = NULL;
+	      if (r_symndx >= symtab_hdr->sh_info)
+		{
+		  h = sym_hashes[r_symndx - symtab_hdr->sh_info];
+		  if (info->wrap_hash != NULL
+		      && (section->flags & SEC_DEBUGGING) != 0)
+		    h = ((struct elf_link_hash_entry *)
+			 unwrap_hash_lookup (info, ibfd, &h->root));
+
+		  while (h->root.type == bfd_link_hash_indirect
+			 || h->root.type == bfd_link_hash_warning)
+		    h = (struct elf_link_hash_entry *) h->root.u.i.link;
+		}
+
+	      relative = true;
+	      if (h != NULL
+		       && h->dynindx != -1
+		       && (!bfd_link_pic (info)
+			   || !(bfd_link_pie (info) || SYMBOLIC_BIND (info, h))
+			   || !h->def_regular))
+		relative = false;
+
+	      if (!relative)
+		continue;
+
+	      r_offset = _bfd_elf_section_offset (info->output_bfd,
+						  info,
+						  section,
+						  irela->r_offset);
+	      r_offset += (section->output_section->vma
+			   + section->output_offset);
+
+	      if (!elegible_relr (r_offset, section))
+		continue;
+
+	      if (!append_relr_off (htab, section, r_offset))
+		return false;
+	    }
+	}
+    }
+
+  return true;
+}
 
 bool
 elfNN_aarch64_size_stubs (bfd *output_bfd,
@@ -4821,6 +5016,45 @@ elfNN_aarch64_size_stubs (bfd *output_bfd,
       (*htab->layout_sections_again) ();
     }
 
+  if (htab->root.srelrdyn != NULL)
+    {
+      got_and_plt_relr_for_local_syms (info);
+
+      if (htab->relr_count != 0)
+	{
+	  bfd_vma *relr_addr = sort_relr (htab);
+	  if (relr_addr == NULL)
+	    return false;
+
+	  // TODO compute 32 bits
+	  size_t i = 0;
+	  while (i < htab->relr_count)
+	    {
+	      bfd_vma base = relr_addr[i];
+	      htab->root.srelrdyn->size += 8;
+	      i++;
+	      base += 8;
+	      while (1)
+		{
+		  size_t start_i = i;
+		  while (i < htab->relr_count
+			 && relr_addr[i] - base < 63 * 8
+			 && (relr_addr[i] - base) % 8 == 0)
+		    i++;
+		  if (i == start_i)
+		    break;
+		  htab->root.srelrdyn->size += 8;
+		  base += 63 * 8;
+		}
+	    }
+	  free (relr_addr);
+	}
+
+      maybe_strip_output (info, htab->root.srelrdyn);
+
+      (*htab->layout_sections_again) ();
+    }
+
   for (;;)
     {
       bool stub_changed = false;
@@ -4877,6 +5111,58 @@ elfNN_aarch64_build_stubs (struct bfd_link_info *info)
   /* Build the stubs as directed by the stub hash table.  */
   table = &htab->stub_hash_table;
   bfd_hash_traverse (table, aarch64_build_one_stub, info);
+
+  return true;
+}
+
+bool
+elfNN_aarch64_build_relr (struct bfd_link_info *info)
+{
+  struct elf_aarch64_link_hash_table *htab;
+
+  htab = elf_aarch64_hash_table (info);
+
+  if (htab->root.srelrdyn != NULL && htab->root.srelrdyn->size != 0)
+    {
+      htab->root.srelrdyn->contents
+	= bfd_alloc (htab->root.dynobj, htab->root.srelrdyn->size);
+      if (htab->root.srelrdyn->contents == NULL)
+	return false;
+
+      bfd_vma *relr_addr = sort_relr (htab);
+      if (relr_addr == NULL)
+	return false;
+
+      size_t i = 0;
+      bfd_byte *loc = htab->root.srelrdyn->contents;
+      while (i < htab->relr_count)
+	{
+	  bfd_vma base = relr_addr[i];
+	  BFD_ASSERT ((base & 0x1) == 0);
+
+	  bfd_put_64 (htab->root.dynobj, base, loc);
+	  loc += 8;
+	  i++;
+	  base += 8;
+	  while (1)
+	    {
+	      bfd_vma bits = 0;
+	      while (i < htab->relr_count
+		     && relr_addr[i] - base < 63 * 8
+		     && (relr_addr[i] - base) % 8 == 0)
+		{
+		  bits |= (bfd_vma) 1 << ((relr_addr[i] - base) / 8);
+		  i++;
+		}
+	      if (bits == 0)
+		break;
+	      bfd_put_64 (htab->root.dynobj, (bits << 1) | 1, loc);
+	      loc += 8;
+	      base += 63 * 8;
+	    }
+	}
+      free (relr_addr);
+    }
 
   return true;
 }
@@ -5984,26 +6270,31 @@ elfNN_aarch64_final_link_relocate (reloc_howto_type *howto,
 	      outrel.r_addend += value;
 	    }
 
-	  sreloc = elf_section_data (input_section)->sreloc;
-	  if (sreloc == NULL || sreloc->contents == NULL)
-	    return bfd_reloc_notsupported;
-
-	  loc = sreloc->contents + sreloc->reloc_count++ * RELOC_SIZE (globals);
-	  bfd_elfNN_swap_reloca_out (output_bfd, &outrel, loc);
-
-	  if (sreloc->reloc_count * RELOC_SIZE (globals) > sreloc->size)
+	  if (!info->enable_dt_relr
+	      || !relocate
+	      || !elegible_relr (outrel.r_offset, input_section))
 	    {
-	      /* Sanity to check that we have previously allocated
-		 sufficient space in the relocation section for the
-		 number of relocations we actually want to emit.  */
-	      abort ();
-	    }
+	      sreloc = elf_section_data (input_section)->sreloc;
+	      if (sreloc == NULL || sreloc->contents == NULL)
+		return bfd_reloc_notsupported;
 
-	  /* If this reloc is against an external symbol, we do not want to
-	     fiddle with the addend.  Otherwise, we need to include the symbol
-	     value so that it becomes an addend for the dynamic reloc.  */
-	  if (!relocate)
-	    return bfd_reloc_ok;
+	      loc = sreloc->contents + sreloc->reloc_count++ * RELOC_SIZE (globals);
+	      bfd_elfNN_swap_reloca_out (output_bfd, &outrel, loc);
+
+	      if (sreloc->reloc_count * RELOC_SIZE (globals) > sreloc->size)
+		{
+		  /* Sanity to check that we have previously allocated
+		     sufficient space in the relocation section for the
+		     number of relocations we actually want to emit.  */
+		  abort ();
+		}
+
+	      /* If this reloc is against an external symbol, we do not want to
+		 fiddle with the addend.  Otherwise, we need to include the symbol
+		 value so that it becomes an addend for the dynamic reloc.  */
+	      if (!relocate)
+		return bfd_reloc_ok;
+	    }
 
 	  return _bfd_final_link_relocate (howto, input_bfd, input_section,
 					   contents, rel->r_offset, value,
@@ -8084,6 +8375,8 @@ elfNN_aarch64_check_relocs (bfd *abfd, struct bfd_link_info *info,
 	      }
 
 	    p->count += 1;
+	    if (elegible_relr (rel->r_offset, sec))
+	      p->rel_count += 1;
 
 	    if (elfNN_aarch64_howto_table[howto_index].pc_relative)
 	      p->pc_count += 1;
@@ -9098,12 +9391,20 @@ elfNN_aarch64_allocate_dynrelocs (struct elf_link_hash_entry *h, void *inf)
   for (p = h->dyn_relocs; p != NULL; p = p->next)
     {
       asection *sreloc;
+      unsigned int count;
 
       sreloc = elf_section_data (p->sec)->sreloc;
 
       BFD_ASSERT (sreloc != NULL);
 
-      sreloc->size += p->count * RELOC_SIZE (htab);
+      count = p->count;
+
+      if (info->enable_dt_relr
+	  && (eh->root.type != STT_GNU_IFUNC
+	      && SYMBOL_REFERENCES_LOCAL (info, h)))
+	count -= p->rel_count;
+
+      sreloc->size += count * RELOC_SIZE (htab);
     }
 
   return true;
@@ -9228,8 +9529,14 @@ elfNN_aarch64_size_dynamic_sections (bfd *output_bfd ATTRIBUTE_UNUSED,
 		}
 	      else if (p->count != 0)
 		{
+		  unsigned int count;
+
+		  count = p->count;
+		  // CHECK for ifunc (?)
+		  if (info->enable_dt_relr)
+		    count -= p->rel_count;
 		  srel = elf_section_data (p->sec)->sreloc;
-		  srel->size += p->count * RELOC_SIZE (htab);
+		  srel->size += count * RELOC_SIZE (htab);
 		  if ((p->sec->output_section->flags & SEC_READONLY) != 0)
 		    info->flags |= DF_TEXTREL;
 		}
