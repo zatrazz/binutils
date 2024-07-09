@@ -1591,6 +1591,10 @@ Disable relocation overflow check.  This can be used to disable
 relocation overflow check if there will be no dynamic relocation
 overflow at run-time.  Supported for x86_64.
 
+@item no-memory-seal
+Generate GNU_PROPERTY_NO_MEMORY_SEAL in .note.gnu.property section to
+indicate that object file requires no memory sealing.
+
 @item now
 When generating an executable or shared library, mark it to tell the
 dynamic linker to resolve all symbols when the program is started, or

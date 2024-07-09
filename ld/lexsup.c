@@ -2271,6 +2271,8 @@ elf_shlib_list_options (FILE *file)
       fprintf (file, _("\
   -z textoff                  Don't treat DT_TEXTREL in output as error\n"));
     }
+  fprintf (file, _("\
+  -z no-memory-seal           Generate GNU_PROPERTY_NO_MEMORY_SEAL\n"));
 }
 
 static void
