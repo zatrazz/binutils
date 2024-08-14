@@ -21464,6 +21464,12 @@ print_gnu_property_note (Filedata * filedata, Elf_Internal_Note * pnote)
 		printf (_("<corrupt length: %#x> "), datasz);
 	      goto next;
 
+	    case GNU_PROPERTY_NO_MEMORY_SEAL:
+	      printf ("no memory sealing ");
+	      if (datasz)
+		printf (_("<corrupt length: %#x> "), datasz);
+	      goto next;
+
 	    default:
 	      if ((type >= GNU_PROPERTY_UINT32_AND_LO
 		   && type <= GNU_PROPERTY_UINT32_AND_HI)

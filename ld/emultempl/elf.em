@@ -1030,6 +1030,8 @@ fragment <<EOF
 	config.no_section_header = false;
       else if (strcmp (optarg, "nosectionheader") == 0)
 	config.no_section_header = true;
+      else if (strcmp (optarg, "no-memory-seal") == 0)
+	link_info.no_memory_seal = true;
 EOF
 
 if test x"$GENERATE_SHLIB_SCRIPT" = xyes; then
