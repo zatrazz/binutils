@@ -5,6 +5,9 @@
 
 * Remove support for -z bndplt (MPX prefix instructions).
 
+* Add -z memory-seal/-z nomemory-seal options to ELF linker to mark the
+  object to memory sealed.
+
 Changes in 1.16:
 
 * Improve warning messages for relocations that refer to discarded sections.

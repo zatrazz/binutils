@@ -2888,7 +2888,7 @@ MOSTLYCLEANFILES = *.so *.syms *.stdout *.stderr $(am__append_4) \
 	$(am__append_88) $(am__append_91) $(am__append_93) \
 	$(am__append_102) $(am__append_105) $(am__append_108) \
 	$(am__append_111) $(am__append_114) $(am__append_117) \
-	$(am__append_120) $(am__append_121)
+	$(am__append_120) $(am__append_121) memory_seal_test
 
 # We will add to these later, for each individual test.  Note
 # that we add each test under check_SCRIPTS or check_PROGRAMS;
@@ -2901,7 +2901,7 @@ check_SCRIPTS = $(am__append_2) $(am__append_21) $(am__append_25) \
 	$(am__append_89) $(am__append_96) $(am__append_100) \
 	$(am__append_103) $(am__append_106) $(am__append_109) \
 	$(am__append_112) $(am__append_115) $(am__append_118) \
-	$(am__append_122)
+	$(am__append_122) memory_seal_test.sh
 check_DATA = $(am__append_3) $(am__append_22) $(am__append_26) \
 	$(am__append_32) $(am__append_38) $(am__append_45) \
 	$(am__append_50) $(am__append_54) $(am__append_58) \
@@ -2910,7 +2910,8 @@ check_DATA = $(am__append_3) $(am__append_22) $(am__append_26) \
 	$(am__append_90) $(am__append_97) $(am__append_101) \
 	$(am__append_104) $(am__append_107) $(am__append_110) \
 	$(am__append_113) $(am__append_116) $(am__append_119) \
-	$(am__append_123)
+	$(am__append_123) memory_seal_test_1.stdout \
+	memory_seal_test_2.stdout
 BUILT_SOURCES = $(am__append_42)
 TESTS = $(check_SCRIPTS) $(check_PROGRAMS)
 
@@ -6520,6 +6521,13 @@ pr26936.sh.log: pr26936.sh
 retain.sh.log: retain.sh
 	@p='retain.sh'; \
 	b='retain.sh'; \
+	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
+	--log-file $$b.log --trs-file $$b.trs \
+	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
+	"$$tst" $(AM_TESTS_FD_REDIRECT)
+memory_seal_test.sh.log: memory_seal_test.sh
+	@p='memory_seal_test.sh'; \
+	b='memory_seal_test.sh'; \
 	$(am__check_pre) $(LOG_DRIVER) --test-name "$$f" \
 	--log-file $$b.log --trs-file $$b.trs \
 	$(am__common_driver_flags) $(AM_LOG_DRIVER_FLAGS) $(LOG_DRIVER_FLAGS) -- $(LOG_COMPILE) \
@@ -10524,6 +10532,18 @@ package_metadata_test.o: package_metadata_main.c
 package_metadata_test$(EXEEXT): package_metadata_test.o gcctestdir/ld
 	$(CXXLINK) package_metadata_test.o -Wl,--package-metadata='{"foo":"bar"}'
 	$(TEST_READELF) --notes $@ | grep -q '{"foo":"bar"}'
+memory_seal_test_1.stdout: memory_seal_main
+	$(TEST_READELF) -n $< >$@
+memory_seal_test_2.stdout: memory_seal_shared.so
+	$(TEST_READELF) -n $< >$@
+memory_seal_main: gcctestdir/ld memory_seal_main.o
+	gcctestdir/ld -z memory-seal -o $@ memory_seal_main.o
+memory_seal_main.o: memory_seal_main.c
+	$(COMPILE) -c -o $@ $<
+memory_seal_shared.so: gcctestdir/ld memory_seal_shared.o
+	gcctestdir/ld -z memory-seal -shared -o $@ memory_seal_shared.o
+memory_seal_shared.o: memory_seal_shared.c
+	$(COMPILE) -c -fPIC -o $@ $<
 
 # Tell versions [3.59,3.63) of GNU make to not export all variables.
 # Otherwise a system limit (for SysV at least) may be exceeded.

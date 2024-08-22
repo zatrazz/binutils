@@ -3277,6 +3277,10 @@ Layout::create_gnu_properties_note()
 {
   parameters->target().finalize_gnu_properties(this);
 
+  if (parameters->options().memory_seal())
+    this->add_gnu_property(elfcpp::NT_GNU_PROPERTY_TYPE_0,
+			   elfcpp::GNU_PROPERTY_MEMORY_SEAL, 0, 0);
+
   if (this->gnu_properties_.empty())
     return;
 

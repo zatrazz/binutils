@@ -4476,3 +4476,22 @@ package_metadata_test.o: package_metadata_main.c
 package_metadata_test$(EXEEXT): package_metadata_test.o gcctestdir/ld
 	$(CXXLINK) package_metadata_test.o -Wl,--package-metadata='{"foo":"bar"}'
 	$(TEST_READELF) --notes $@ | grep -q '{"foo":"bar"}'
+
+check_SCRIPTS += memory_seal_test.sh
+check_DATA += memory_seal_test_1.stdout memory_seal_test_2.stdout
+MOSTLYCLEANFILES += memory_seal_test
+memory_seal_test_1.stdout: memory_seal_main
+	$(TEST_READELF) -n $< >$@
+memory_seal_test_2.stdout: memory_seal_shared.so
+	$(TEST_READELF) -n $< >$@
+memory_seal_main: gcctestdir/ld memory_seal_main.o
+	gcctestdir/ld -z memory-seal -o $@ memory_seal_main.o
+memory_seal_main.o: memory_seal_main.c
+	$(COMPILE) -c -o $@ $<
+memory_seal_shared.so: gcctestdir/ld memory_seal_shared.o
+	gcctestdir/ld -z memory-seal -shared -o $@ memory_seal_shared.o
+memory_seal_shared.o: memory_seal_shared.c
+	$(COMPILE) -c -fPIC -o $@ $<
+
+
+

@@ -1546,6 +1546,9 @@ class General_options
 	      N_("Keep .text.hot, .text.startup, .text.exit and .text.unlikely "
 		 "as separate sections in the final binary."),
 	      N_("Merge all .text.* prefix sections."));
+  DEFINE_bool(memory_seal, options::DASH_Z, '\0', false,
+	      N_("Mark object be memory sealed"),
+	      N_("Don't mark oject to be memory sealed"));
 
 
  public:
